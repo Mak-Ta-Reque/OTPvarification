@@ -24,6 +24,7 @@ class UserManager(BaseUserManager):
             phone=phone
         )
         user_obj.set_password(password)
+
         user_obj.staff = is_staff
         user_obj.admin = is_admin
         user_obj.active = is_active

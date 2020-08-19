@@ -2,12 +2,13 @@ import random
 
 # Create your views here.
 from django.contrib.auth import login
-from rest_framework import permissions
+from rest_framework import permissions, generics, status
+from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from .models import User, PhoneOTP
 from django.shortcuts import get_object_or_404
-from .serializers import CreateUserSerializer, LoginSerializer
+from .serializers import CreateUserSerializer, LoginSerializer, ChangePasswordSerializer, ChangePhoneSerializer
 from knox.views import LoginView as KnoxLoginView
 
 
@@ -132,6 +133,7 @@ class Register(APIView):
                     serializer = CreateUserSerializer(data=temp_data)
                     serializer.is_valid(raise_exception=True)
                     user = serializer.save()
+                    user.set_unusable_password()
                     old.delete()
                     return Response({
                         'status': True,
@@ -159,6 +161,98 @@ class Register(APIView):
                 'status': False,
                 'detail': 'Both phone number and password must be submitted'
             })
+
+
+class ChangePasswordView(generics.UpdateAPIView):
+    """
+    An endpoint for changing password.
+    """
+    serializer_class = ChangePasswordSerializer
+    model = User
+    permission_classes = (IsAuthenticated,)
+
+    def get_object(self, queryset=None):
+        obj = self.request.user
+        return obj
+
+    def update(self, request, *args, **kwargs):
+        self.object = self.get_object()
+        serializer = self.get_serializer(data=request.data)
+
+        if serializer.is_valid():
+            # Check old password
+            if not self.object.check_password(serializer.data.get("old_password")):
+                return Response({"old_password": ["Wrong password."]}, status=status.HTTP_400_BAD_REQUEST)
+            # set_password also hashes the password that the user will get
+            self.object.set_password(serializer.data.get("new_password"))
+            self.object.save()
+            response = {
+                'status': 'success',
+                'code': status.HTTP_200_OK,
+                'message': 'Password updated successfully',
+                'data': []
+            }
+
+            return Response(response)
+
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+
+
+class ChangePhoneView(generics.UpdateAPIView):
+    """
+    An endpoint for changing password.
+    """
+    serializer_class = ChangePhoneSerializer
+    model = User
+    permission_classes = (IsAuthenticated,)
+
+    def get_object(self, queryset=None):
+        obj = self.request.user
+        return obj
+
+    def update(self, request, *args, **kwargs):
+        self.object = self.get_object()
+        serializer = self.get_serializer(data=request.data)
+
+        if serializer.is_valid():
+
+            # Check  new phone exists in db
+            new_phone_user = User.objects.filter(phone__iexact=serializer.data.get("new_phone"))
+            if new_phone_user.exists():
+                return Response({"new_phone": ["Already has account in this number."]}, status=status.HTTP_400_BAD_REQUEST)
+
+            # Verify the new number
+            new_phone_user = PhoneOTP.objects.filter(phone__iexact=serializer.data.get("new_phone"))
+            if new_phone_user.exists():
+                new_phone_user = new_phone_user.first()
+                validated = new_phone_user.validated
+                if not validated:
+                    return Response({"new_phone": ["OTP is not validated, validate the phone number"]}, status=status.HTTP_400_BAD_REQUEST)
+                else:
+                    new_phone_user.delete()
+
+            else:
+                return Response({"new_phone": ["Verify your number first"]},
+
+                                status=status.HTTP_400_BAD_REQUEST)
+
+            if not self.object.phone == serializer.data.get("old_phone"):
+                return Response({"old_phone": ["Wrong phone number."]}, status=status.HTTP_400_BAD_REQUEST)
+            # set_password also hashes the password that the user will get
+            self.object.phone = serializer.data.get("new_phone")
+            self.object.save()
+            response = {
+                'status': 'success',
+                'code': status.HTTP_200_OK,
+                'message': 'Phone number updated successfully',
+                'data': []
+            }
+
+            return Response(response)
+
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 
 class LoginAPI(KnoxLoginView):
