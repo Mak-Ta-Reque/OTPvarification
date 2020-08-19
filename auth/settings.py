@@ -20,7 +20,7 @@ BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # See https://docs.djangoproject.com/en/3.0/howto/deployment/checklist/
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = ''
+SECRET_KEY = '8%j+tz%+z62l(gz(uz9n9(7@g98fx*b$&(bhn__16=4=3'
 
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
@@ -135,4 +135,12 @@ REST_KNOX = {
   'USER_SERIALIZER': 'knox.serializers.UserSerializer',
   'TOKEN_LIMIT_PER_USER': None,
   'AUTO_REFRESH': False,
+}
+
+OTP_SETTINGS = {
+    'MAX_OTP': 5,
+    'CLIENT': "",
+    'API_KEY': "",
+    'SENDER_ID': "",
+    'TEMPLATE_NAME': ""
 }

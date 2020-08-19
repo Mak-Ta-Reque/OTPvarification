@@ -2,6 +2,7 @@ import random
 
 # Create your views here.
 from django.contrib.auth import login
+from django.http import request
 from rest_framework import permissions, generics, status
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
@@ -10,6 +11,7 @@ from .models import User, PhoneOTP
 from django.shortcuts import get_object_or_404
 from .serializers import CreateUserSerializer, LoginSerializer, ChangePasswordSerializer, ChangePhoneSerializer
 from knox.views import LoginView as KnoxLoginView
+from django.conf import settings
 
 
 class ValidatePhoneSendOTP(APIView):
@@ -18,46 +20,51 @@ class ValidatePhoneSendOTP(APIView):
         phone_number = request.data.get('phone')
         if phone_number:
             phone = str(phone_number)
+
+            '''
             user = User.objects.filter(phone__iexact=phone)
             if user.exists():
                 return Response({
                     'statue': False,
                     'details': 'Phone number already registered.'
                 })
-            else:
-                key = send_otp(phone)
-                if key:
-                    old = PhoneOTP.objects.filter(phone__iexact=phone)
-                    if old.exists():
-                        old = old.first()
-                        count = old.count
-                        if count > 10:
-                            return Response({
-                                'statue': False,
-                                'details': 'OTP limit exceeded.'
-                            })
-                        old.count = count + 1
-                        old.save()
-                        print('count increased ', count)
+            else:'''
+            key = send_otp(phone)
+            if key:
+                old = PhoneOTP.objects.filter(phone__iexact=phone)
+                if old.exists():
+                    old = old.first()
+                    count = old.count
+                    max_otp = settings.OTP_SETTINGS['MAX_OTP']
+                    if count > max_otp:
                         return Response({
-                            'statue': True,
-                            'details': 'OTP sent successfully.'
+                            'statue': False,
+                            'details': 'OTP limit exceeded.'
                         })
-
-                    else:
-                        PhoneOTP.objects.create(
-                            phone=phone,
-                            otp=key,
-                        )
-                        return Response({
-                            'statue': True,
-                            'details': 'OTP sent successfully.'
-                        })
-                else:
+                    old.otp = key
+                    old.count = count + 1
+                    old.save()
+                    print('count increased ', count)
                     return Response({
-                        'statue': False,
-                        'details': 'Sending OTP error.'
+                        'statue': True,
+                        'details': 'OTP sent successfully.'
                     })
+
+                else:
+                    PhoneOTP.objects.create(
+                        phone=phone,
+                        otp=key,
+                    )
+                    return Response({
+                        'statue': True,
+                        'details': 'OTP sent successfully.'
+                    })
+            else:
+                return Response({
+                    'statue': False,
+                    'details': 'Sending OTP error.'
+
+                })
 
         else:
             return Response({
@@ -130,15 +137,25 @@ class Register(APIView):
                         'phone': phone,
                         'password': password
                     }
-                    serializer = CreateUserSerializer(data=temp_data)
-                    serializer.is_valid(raise_exception=True)
-                    user = serializer.save()
-                    user.set_unusable_password()
-                    old.delete()
-                    return Response({
-                        'status': True,
-                        'detail': 'Account created'
-                    })
+                    check_account = User.objects.filter(phone__iexact=phone)
+                    if check_account.exists():
+                        old.delete()
+                        return Response({
+                            'status': False,
+                            'detail': 'Account account already exists'
+                        })
+
+                    else:
+
+                        serializer = CreateUserSerializer(data=temp_data)
+                        serializer.is_valid(raise_exception=True)
+                        user = serializer.save()
+                        user.set_unusable_password()
+                        old.delete()
+                        return Response({
+                            'status': True,
+                            'detail': 'Account created'
+                        })
                 else:
                     return Response({
                         'status': False,
@@ -198,8 +215,6 @@ class ChangePasswordView(generics.UpdateAPIView):
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 
-
-
 class ChangePhoneView(generics.UpdateAPIView):
     """
     An endpoint for changing password.
@@ -221,7 +236,8 @@ class ChangePhoneView(generics.UpdateAPIView):
             # Check  new phone exists in db
             new_phone_user = User.objects.filter(phone__iexact=serializer.data.get("new_phone"))
             if new_phone_user.exists():
-                return Response({"new_phone": ["Already has account in this number."]}, status=status.HTTP_400_BAD_REQUEST)
+                return Response({"new_phone": ["Already has account in this number."]},
+                                status=status.HTTP_400_BAD_REQUEST)
 
             # Verify the new number
             new_phone_user = PhoneOTP.objects.filter(phone__iexact=serializer.data.get("new_phone"))
@@ -229,7 +245,8 @@ class ChangePhoneView(generics.UpdateAPIView):
                 new_phone_user = new_phone_user.first()
                 validated = new_phone_user.validated
                 if not validated:
-                    return Response({"new_phone": ["OTP is not validated, validate the phone number"]}, status=status.HTTP_400_BAD_REQUEST)
+                    return Response({"new_phone": ["OTP is not validated, validate the phone number"]},
+                                    status=status.HTTP_400_BAD_REQUEST)
                 else:
                     new_phone_user.delete()
 
@@ -266,9 +283,64 @@ class LoginAPI(KnoxLoginView):
         return super().post(request, format=None)
 
 
+class DeleteAccountView(generics.UpdateAPIView):
+    model = User
+    permission_classes = (IsAuthenticated,)
+
+    def get_object(self, queryset=None):
+        obj = self.request.user
+        return obj
+
+    def update(self, request, *args, **kwargs):
+        self.object = self.get_object()
+        phone = PhoneOTP.objects.filter(phone__iexact=self.object.phone)
+
+        if phone.exists():
+            old = phone.first()
+            validated = old.validated
+            if validated:
+                self.object.delete()
+                old.delete()
+                response = {
+                    'status': 'success',
+                    'code': status.HTTP_200_OK,
+                    'message': 'Account deleted successfully.',
+                    'data': []
+                }
+
+                return Response(response)
+            else:
+                response = {
+                    'status': 'failed',
+                    'code': status.HTTP_401_UNAUTHORIZED,
+                    'message': 'Validate OTP.',
+                    'data': []
+                }
+                return Response(response)
+
+
+
+        else:
+            response = {
+                'status': 'failed',
+                'code': status.HTTP_401_UNAUTHORIZED,
+                'message': 'Validate the user.',
+                'data': []
+            }
+            return Response(response)
+
+
 def send_otp(phone):
     if phone:
         key = random.randint(999, 9999)
+        link = settings.OTP_SETTINGS['CLIENT'] + "module=TRANS_SMS&apikey=" + \
+               settings.OTP_SETTINGS['API_KEY'] + "&to=" + phone +\
+               "&from=" + settings.OTP_SETTINGS['SENDER_ID'] +\
+               "&templatename=" + settings.OTP_SETTINGS['TEMPLATE_NAME'] +\
+               "&var1=" + phone + "&var2=" +key
+        print(link)
+        message = request.get(link)
+        print(message)
         return key
     else:
         return False
